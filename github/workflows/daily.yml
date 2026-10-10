@@ -1,0 +1,23 @@
+name: Daily Top
+
+on:
+  schedule:
+    - cron: "50 20 * * *"   # 23:50 МСК
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Run daily top
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          MANGABUFF_SESSION: ${{ secrets.MANGABUFF_SESSION }}
+          MODE: daily
+        run: python bot.py
