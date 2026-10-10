@@ -1,28 +1,23 @@
-name: Weekly Club Stats
+name: Weekly Top
 
 on:
   schedule:
-    # Каждый понедельник в 07:00 UTC (≈ 10:00 МСК)
-    - cron: "0 7 * * 1"
-  workflow_dispatch:  # кнопка "Запустить вручную" с телефона
+    - cron: "50 20 * * 0"   # воскресенье 23:50 МСК
+  workflow_dispatch:
 
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install deps
-        run: pip install -r requirements.txt
-
-      - name: Run bot
+      - run: pip install -r requirements.txt
+      - name: Run weekly top
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           MANGABUFF_SESSION: ${{ secrets.MANGABUFF_SESSION }}
+          MODE: weekly
         run: python bot.py
