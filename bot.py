@@ -1,127 +1,234 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+MangaBuff club top → Telegram
+GitHub Actions. 0₽.
+Страницы: /boost и /history
+"""
+
 import os
 import re
-from datetime import datetime, timezone, timedelta
+import sys
+from datetime import datetime
+from urllib.parse import unquote
+from zoneinfo import ZoneInfo
+
 import requests
 from bs4 import BeautifulSoup
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-CHAT_ID = os.environ.get("CHAT_ID", "-1004375644856")
-MANGABUFF_SESSION = os.environ.get("MANGABUFF_SESSION", "")
-XSRF_TOKEN = os.environ.get("XSRF_TOKEN", "")
-FULL_COOKIE = os.environ.get("FULL_COOKIE", "")
-CLUB_URL = os.environ.get("CLUB_URL", "https://mangabuff.ru/clubs/utinoe-bratstvo")
-CLUB_NAME = os.environ.get("CLUB_NAME", "Утиное Братство")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+CHAT_ID = os.environ.get("CHAT_ID", "").strip()
+FULL_COOKIE = os.environ.get("FULL_COOKIE", "").strip()
+CLUB_SLUG = os.environ.get("CLUB_SLUG", "utinoe-bratstvo").strip()
+MODE = os.environ.get("MODE", "weekly").strip().lower()  # daily | weekly | recent | all
 
-MSK = timezone(timedelta(hours=3))
+BASE = "https://mangabuff.ru"
+CLUB_NAME = "Утиное Братство"
+MSK = ZoneInfo("Europe/Moscow")
 
-def send_telegram(text: str):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    r = requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True,
-    }, timeout=30)
-    print("Telegram:", r.status_code)
-    r.raise_for_status()
+UA = (
+    "Mozilla/5.0 (Linux; Android 13; Mobile) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Mobile Safari/537.36"
+)
 
-def get_club_data():
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Referer": "https://mangabuff.ru/",
-        "Origin": "https://mangabuff.ru",
-        "Connection": "keep-alive",
-        "Upgrade-Insecure-Requests": "1",
-        "Sec-Fetch-Dest": "document",
-        "Sec-Fetch-Mode": "navigate",
-        "Sec-Fetch-Site": "same-origin",
-    })
 
+def now_msk() -> str:
+    return datetime.now(MSK).strftime("%d.%m.%Y, %H:%M МСК")
+
+
+def session() -> requests.Session:
+    s = requests.Session()
+    s.headers.update(
+        {
+            "User-Agent": UA,
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Referer": f"{BASE}/clubs/{CLUB_SLUG}/boost",
+            "Origin": BASE,
+        }
+    )
     if FULL_COOKIE:
-        session.headers["Cookie"] = FULL_COOKIE
-        print("✅ Используем FULL_COOKIE (все cookies)")
-    else:
-        if MANGABUFF_SESSION:
-            session.cookies.set("mangabuff_session", MANGABUFF_SESSION, domain="mangabuff.ru", path="/")
-        if XSRF_TOKEN:
-            xsrf = unquote(XSRF_TOKEN).replace("%3D", "=")
-            session.cookies.set("XSRF-TOKEN", xsrf, domain="mangabuff.ru", path="/")
-            session.headers["X-XSRF-TOKEN"] = xsrf
+        s.headers["Cookie"] = FULL_COOKIE
+        m = re.search(r"XSRF-TOKEN=([^;]+)", FULL_COOKIE)
+        if m:
+            s.headers["X-XSRF-TOKEN"] = unquote(m.group(1))
+    return s
 
-    print("GET", CLUB_URL)
-    r = session.get(CLUB_URL, timeout=45, allow_redirects=True)
-    print("Status:", r.status_code)
-    print("Final URL:", r.url)
-    print("HTML length:", len(r.text))
 
-    if r.status_code == 403:
-        raise Exception("403 Forbidden — MangaBuff блокирует сервер (DDoS-Guard)")
-    if "login" in r.url.lower() or "авторизац" in r.text.lower()[:2500]:
-        raise Exception("Редирект на логин — cookie недействительна")
+def fetch(url: str) -> str:
+    s = session()
+    r = s.get(url, timeout=45, allow_redirects=True)
+    text = r.text or ""
+    head = text[:800].lower()
+    if r.status_code == 403 or "ddos-guard" in head or "ddos guard" in head:
+        raise RuntimeError(
+            f"403 / DDoS-Guard: {url} | status={r.status_code} len={len(text)}. "
+            "Обнови FULL_COOKIE с телефона."
+        )
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code} для {url}, len={len(text)}")
+    if "/login" in (r.url or "") and "login" in head:
+        raise RuntimeError("Редирект на login — cookie мёртвый, обнови FULL_COOKIE")
+    return text
 
-    r.raise_for_status()
-    soup = BeautifulSoup(r.text, "lxml")
 
-    result = {}
-    rows = soup.select(".club-member, .members-list__item, .club__member, .member-item, [class*='member'], tr, .user-card, .club-users__item, li, .list-item")
-    print("Rows:", len(rows))
+def parse_boost_top(html: str, limit: int = 15) -> list:
+    soup = BeautifulSoup(html, "lxml")
+    results = []
+    seen = set()
+    bad = (
+        "замен", "опыт", "сегодня", "доступно", "карт", "владел",
+        "штраф", "попыт", "бесплат", "платн", "неделя", "сутки", "месяц",
+    )
 
-    for row in rows:
-        name_el = row.select_one("a[href*='/users/'], .nickname, .name, .username, a")
-        if not name_el: continue
-        name = name_el.get_text(strip=True)
-        if not name or len(name) < 2: continue
+    for el in soup.select(
+        "a[href*='/users/'], .user-name, .nickname, "
+        "[class*='member'], [class*='boost'], [class*='rating'], li, tr"
+    ):
+        text = " ".join(el.get_text(" ", strip=True).split())
+        if not text or len(text) > 80:
+            continue
+        m = re.search(r"^(.+?)\s+(\d{1,6})$", text)
+        if not m:
+            continue
+        name, score = m.group(1).strip(), m.group(2)
+        low = name.lower()
+        if any(b in low for b in bad):
+            continue
+        if name in seen or not re.search(r"[A-Za-zА-Яа-я]", name):
+            continue
+        seen.add(name)
+        results.append((name, score))
+        if len(results) >= limit:
+            break
 
-        text = row.get_text(" ", strip=True)
-        numbers = [int(x) for x in re.findall(r"\b(\d{1,5})\b", text)]
-        day = week = None
-        for n in numbers:
-            if 0 <= n < 10000:
-                if day is None: day = n
-                elif week is None: week = n
+    if len(results) < 5:
+        body = soup.get_text("\n", strip=True)
+        for line in body.splitlines():
+            line = " ".join(line.split())
+            m = re.search(r"^([A-Za-zА-Яа-я0-9_ .\-]{2,40})\s+(\d{1,6})$", line)
+            if not m:
+                continue
+            name, score = m.group(1).strip(), m.group(2)
+            low = name.lower()
+            if any(b in low for b in bad):
+                continue
+            if name in seen:
+                continue
+            seen.add(name)
+            results.append((name, score))
+            if len(results) >= limit:
                 break
-        if day is not None or week is not None:
-            result[name] = {"day": day or 0, "week": week or 0}
 
-    print("Members with numbers:", len(result))
-    return result
+    return results[:limit]
 
-def format_top(data, key, title):
-    items = sorted([(n, v.get(key, 0)) for n, v in data.items()], key=lambda x: x[1], reverse=True)
-    items = [x for x in items if x[1] > 0][:40]
-    if not items:
-        return f"❌ Нет данных: {title}\nКлуб: <b>{CLUB_NAME}</b>"
 
-    lines = [f"<b>📊 {title}</b>", f"<i>{datetime.now(MSK).strftime('%d.%m.%Y %H:%M')} МСК</i>", f"Клуб: <b>{CLUB_NAME}</b>", ""]
-    for i, (name, val) in enumerate(items, 1):
-        medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-        lines.append(f"{medal} <b>{name}</b> — {val}")
-    total = sum(v for _, v in items)
-    lines += ["", f"<b>Всего:</b> {total}", f"В топе: {len(items)}"]
+def parse_history(html: str, limit: int = 10) -> list:
+    soup = BeautifulSoup(html, "lxml")
+    out = []
+    seen = set()
+    for el in soup.select(
+        "li, tr, .history-item, [class*='history'], [class*='log'], [class*='contrib']"
+    ):
+        t = " ".join(el.get_text(" ", strip=True).split())
+        if 8 < len(t) < 120 and t not in seen:
+            if re.search(r"\d", t) or re.search(r"[A-Za-zА-Яа-я]{3,}", t):
+                seen.add(t)
+                out.append(t)
+        if len(out) >= limit:
+            break
+    return out[:limit]
+
+
+def format_top(title: str, rows: list) -> str:
+    medals = ["🥇", "🥈", "🥉"]
+    lines = [
+        f"<b>{title}</b>",
+        f"<i>{now_msk()}</i>",
+        f"Клуб: <b>{CLUB_NAME}</b>",
+        "Источник: /boost",
+        "",
+    ]
+    if not rows:
+        lines.append("⚠️ Не удалось разобрать топ (структура сайта или cookie).")
+        return "\n".join(lines)
+    for i, (name, score) in enumerate(rows):
+        prefix = medals[i] if i < 3 else f"{i + 1}."
+        lines.append(f"{prefix} <b>{name}</b> — {score}")
     return "\n".join(lines)
 
-def main():
-    mode = os.environ.get("MODE", "recent").lower()
-    print("MODE =", mode)
+
+def format_history(lines: list) -> str:
+    out = [
+        "<b>📜 Последние вклады</b>",
+        f"<i>{now_msk()}</i>",
+        f"Клуб: <b>{CLUB_NAME}</b>",
+        "Источник: /history",
+        "",
+    ]
+    if not lines:
+        out.append("⚠️ История пуста или не распарсилась.")
+    else:
+        for i, t in enumerate(lines, 1):
+            out.append(f"{i}. {t}")
+    return "\n".join(out)
+
+
+def send_telegram(text: str) -> None:
+    if not BOT_TOKEN or not CHAT_ID:
+        raise RuntimeError("Нет BOT_TOKEN или CHAT_ID")
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    r = requests.post(
+        url,
+        json={
+            "chat_id": CHAT_ID,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        },
+        timeout=30,
+    )
+    if not r.ok:
+        raise RuntimeError(f"Telegram error: {r.status_code} {r.text[:300]}")
+
+
+def main() -> int:
+    print(f"MODE={MODE} CLUB={CLUB_SLUG} cookie_len={len(FULL_COOKIE)}")
+    boost_url = f"{BASE}/clubs/{CLUB_SLUG}/boost"
+    history_url = f"{BASE}/clubs/{CLUB_SLUG}/history"
 
     try:
-        data = get_club_data()
+        if MODE in ("daily", "all"):
+            html = fetch(boost_url)
+            rows = parse_boost_top(html)
+            send_telegram(format_top("📊 Топ за сутки (boost)", rows))
+            print(f"daily sent, rows={len(rows)}")
+
+        if MODE in ("weekly", "all"):
+            html = fetch(boost_url)
+            rows = parse_boost_top(html)
+            send_telegram(format_top("📊 Топ за неделю (boost)", rows))
+            print(f"weekly sent, rows={len(rows)}")
+
+        if MODE in ("recent", "all"):
+            html = fetch(history_url)
+            hist = parse_history(html)
+            send_telegram(format_history(hist))
+            print(f"recent sent, lines={len(hist)}")
+
+        if MODE not in ("daily", "weekly", "recent", "all"):
+            print("Unknown MODE: daily|weekly|recent|all", file=sys.stderr)
+            return 1
+        return 0
     except Exception as e:
-        send_telegram(f"❌ Ошибка:\n<code>{e}</code>")
-        raise
+        print(str(e), file=sys.stderr)
+        try:
+            send_telegram(f"❌ MangaBuff bot error\n<code>{e}</code>")
+        except Exception:
+            pass
+        return 1
 
-    if mode == "daily":
-        msg = format_top(data, "day", "Топ за день")
-    elif mode == "weekly":
-        msg = format_top(data, "week", "Топ за неделю")
-    else:
-        msg = format_top(data, "day", "Текущие вклады (день)")
-
-    send_telegram(msg)
-    print("OK")
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
