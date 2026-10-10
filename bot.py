@@ -7,7 +7,6 @@ from datetime import datetime, timezone, timedelta
 import requests
 from bs4 import BeautifulSoup
 
-# ===================== НАСТРОЙКИ =====================
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ.get("CHAT_ID", "-1004375644856")
 MANGABUFF_SESSION = os.environ.get("MANGABUFF_SESSION", "")
@@ -17,16 +16,12 @@ CLUB_NAME = "Утиное Братство"
 MSK = timezone(timedelta(hours=3))
 STATE_FILE = Path("state.json")
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36",
-    "Accept-Language": "ru-RU,ru;q=0.9",
-}
+HEADERS = {"User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36", "Accept-Language": "ru-RU,ru;q=0.9"}
 
-def send_telegram(text: str, chat_id=None):
-    chat_id = chat_id or CHAT_ID
+def send_telegram(text: str):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={
-        "chat_id": chat_id,
+        "chat_id": CHAT_ID,
         "text": text,
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
