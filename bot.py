@@ -9,7 +9,6 @@ BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = os.environ.get("CHAT_ID", "-1004375644856")
 MANGABUFF_SESSION = os.environ.get("MANGABUFF_SESSION", "")
 XSRF_TOKEN = os.environ.get("XSRF_TOKEN", "")
-
 CLUB_URL = os.environ.get("CLUB_URL", "https://mangabuff.ru/clubs/utinoe-bratstvo")
 CLUB_NAME = os.environ.get("CLUB_NAME", "Утиное Братство")
 
@@ -23,7 +22,7 @@ def send_telegram(text: str):
         "parse_mode": "HTML",
         "disable_web_page_preview": True,
     }, timeout=30)
-    print("Telegram:", r.status_code, r.text[:250])
+    print("Telegram:", r.status_code, r.text[:200])
     r.raise_for_status()
 
 def get_club_data():
@@ -36,6 +35,9 @@ def get_club_data():
         "Origin": "https://mangabuff.ru",
         "Connection": "keep-alive",
         "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin",
     })
 
     if MANGABUFF_SESSION:
@@ -61,11 +63,12 @@ def get_club_data():
     r = session.get(CLUB_URL, timeout=45, allow_redirects=True)
     print("Status:", r.status_code)
     print("Final URL:", r.url)
+    print("HTML length:", len(r.text))
 
     if r.status_code == 403:
-        raise Exception("403 Forbidden — cookie или XSRF не приняты. Возьми свежие.")
-    if "login" in r.url.lower() or "авторизац" in r.text.lower()[:3000]:
-        raise Exception("Редирект на логин — cookie устарела. Возьми новые mangabuff_session + XSRF-TOKEN.")
+        raise Exception("403 Forbidden — cookie устарела или сайт блокирует сервер (Render/GitHub)")
+    if "login" in r.url.lower() or "авторизац" in r.text.lower()[:2500]:
+        raise Exception("Редирект на логин — cookie недействительна. Возьми новые.")
 
     r.raise_for_status()
     soup = BeautifulSoup(r.text, "lxml")
@@ -75,7 +78,7 @@ def get_club_data():
         ".club-member, .members-list__item, .club__member, .member-item, "
         "[class*='member'], tr, .user-card, .club-users__item, li, .list-item"
     )
-    print("Строк-кандидатов:", len(rows))
+    print("Rows found:", len(rows))
 
     for row in rows:
         name_el = row.select_one("a[href*='/users/'], .nickname, .name, .username, a")
@@ -103,7 +106,7 @@ def get_club_data():
                 "week": week if week is not None else 0,
             }
 
-    print("Участников с цифрами:", len(result))
+    print("Members with numbers:", len(result))
     return result
 
 def format_top(data: dict, key: str, title: str):
@@ -118,7 +121,7 @@ def format_top(data: dict, key: str, title: str):
         return (
             f"❌ Нет данных: {title}\n"
             f"Клуб: <b>{CLUB_NAME}</b>\n"
-            f"Проверь cookie или структуру страницы."
+            f"Cookie/страница/селекторы."
         )
 
     lines = [
@@ -143,7 +146,7 @@ def main():
     try:
         data = get_club_data()
     except Exception as e:
-        send_telegram(f"❌ Ошибка парсинга:\n<code>{e}</code>")
+        send_telegram(f"❌ Ошибка:\n<code>{e}</code>")
         raise
 
     if mode == "daily":
@@ -151,7 +154,6 @@ def main():
     elif mode == "weekly":
         msg = format_top(data, "week", "Топ за неделю")
     else:
-        # recent / manual — показываем текущий топ за день
         msg = format_top(data, "day", "Текущие вклады (день)")
 
     send_telegram(msg)
