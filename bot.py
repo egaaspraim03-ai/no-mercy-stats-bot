@@ -1,9 +1,8 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MangaBuff club stats bot for Render (utinoe-bratstvo)
-modes: all | now | week | recent
+MangaBuff club stats bot for Render
+modes: all | day | week | month | past_month | today | recent | history
 """
 
 import os
@@ -12,7 +11,7 @@ import sys
 import json
 import random
 import traceback
-from datetime import datetime, timedelta
+from datetime import datetime
 from html import escape
 
 import requests
@@ -47,7 +46,6 @@ HISTORY_URL = f"{BASE}/clubs/{CLUB_SLUG}/history"
 
 # ---------- helpers ----------
 def die(where: str, detail: str = "") -> None:
-    """Юморная ошибка в Telegram + SystemExit"""
     msg = (
         "Извините пожалуйста, но я <b>обосрался</b> 💩\n"
         f"<b>Где:</b> {escape(str(where))}\n"
@@ -82,13 +80,8 @@ def tg_send(text: str) -> None:
 
 
 def headers() -> dict:
-    """Cookie + browser-like headers"""
     h = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/131.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
         "Referer": f"{BASE}/clubs/{CLUB_SLUG}",
@@ -97,7 +90,6 @@ def headers() -> dict:
     }
     if FULL_COOKIE:
         h["Cookie"] = FULL_COOKIE
-        # XSRF из cookie если есть
         m = re.search(r"XSRF-TOKEN=([^;]+)", FULL_COOKIE)
         if m:
             from urllib.parse import unquote
@@ -107,32 +99,16 @@ def headers() -> dict:
 
 # ---------- free proxies ----------
 def proxies():
-    """Список dict {ip, proto} или None"""
     if PROXY:
         p = PROXY.replace("http://", "").replace("https://", "").replace("socks5://", "")
         return [{"ip": p, "proto": "http"}]
 
     sources = [
-        {
-            "url": "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all",
-            "proto": "http",
-        },
-        {
-            "url": "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000&country=all",
-            "proto": "socks5",
-        },
-        {
-            "url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt",
-            "proto": "http",
-        },
-        {
-            "url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt",
-            "proto": "http",
-        },
-        {
-            "url": "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt",
-            "proto": "http",
-        },
+        {"url": "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000&country=all", "proto": "http"},
+        {"url": "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000&country=all", "proto": "socks5"},
+        {"url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt", "proto": "http"},
+        {"url": "https://raw.githubusercontent.com/monosans/proxy-list/main/proxies/http.txt", "proto": "http"},
+        {"url": "https://raw.githubusercontent.com/clarketm/proxy-list/master/proxy-list-raw.txt", "proto": "http"},
     ]
 
     lines = []
@@ -161,7 +137,6 @@ def proxies():
 
 
 def fetch(url: str) -> str:
-    """Скачать страницу: free-прокси → curl_cffi → cloudscraper → direct"""
     h = headers()
     plist = proxies() or []
 
@@ -174,7 +149,7 @@ def fetch(url: str) -> str:
     ]
     impersonates = ["chrome131", "chrome124", "chrome120", "chrome"]
 
-    # 1) free proxies
+    # free proxies
     for pdata in plist[:35]:
         p = pdata["ip"]
         proto = pdata["proto"]
@@ -185,12 +160,8 @@ def fetch(url: str) -> str:
             for imp in impersonates:
                 try:
                     r = cffi_requests.get(
-                        url,
-                        headers=h,
-                        proxies=px,
-                        timeout=15,
-                        impersonate=imp,
-                        allow_redirects=True,
+                        url, headers=h, proxies=px, timeout=15,
+                        impersonate=imp, allow_redirects=True
                     )
                     if r.status_code == 200 and "ddos" not in r.text.lower() and len(r.text) > 1500:
                         print(f"✅ OK curl_cffi {imp} {proto}://{p}")
@@ -208,15 +179,13 @@ def fetch(url: str) -> str:
             except Exception:
                 continue
 
-    # 2) direct
+    # direct
     h["User-Agent"] = random.choice(user_agents)
     px_single = {"http": PROXY, "https": PROXY} if PROXY else None
 
     if HAS_CFFI:
         try:
-            r = cffi_requests.get(
-                url, headers=h, proxies=px_single, timeout=22, impersonate="chrome131"
-            )
+            r = cffi_requests.get(url, headers=h, proxies=px_single, timeout=22, impersonate="chrome131")
             if r.status_code == 200 and "ddos" not in r.text.lower() and len(r.text) > 1500:
                 print("✅ OK direct curl_cffi")
                 return r.text
@@ -228,7 +197,7 @@ def fetch(url: str) -> str:
         if r.status_code == 200 and "ddos" not in r.text.lower() and len(r.text) > 1500:
             print("✅ OK direct requests")
             return r.text
-        die("fetch", f"status={r.status_code} body_len={len(r.text)} (DDoS-Guard/Cloudflare?)")
+        die("fetch", f"status={r.status_code} body_len={len(r.text)}")
     except Exception as e:
         die("fetch", f"requests: {type(e).__name__}: {e}")
 
@@ -236,116 +205,58 @@ def fetch(url: str) -> str:
     return ""
 
 
-# ---------- parsers (адаптивные) ----------
-def _clean(s: str) -> str:
-    return re.sub(r"\s+", " ", (s or "")).strip()
-
-
+# ---------- parsers (точные селекторы) ----------
 def parse_boost(html: str) -> list:
-    """
-    Топ буста: [(nick, score), ...]
-    Сайт меняется — несколько стратегий.
-    """
     soup = BeautifulSoup(html, "lxml")
-    rows = []
-
-    # 1) таблицы
-    for table in soup.find_all("table"):
-        for tr in table.find_all("tr"):
-            tds = tr.find_all(["td", "th"])
-            if len(tds) < 2:
-                continue
-            texts = [_clean(td.get_text(" ", strip=True)) for td in tds]
-            # ищем ник + число
-            nick = None
-            score = None
-            for t in texts:
-                if re.fullmatch(r"\d[\d\s]*", t.replace(" ", "")):
-                    score = int(re.sub(r"\D", "", t) or "0")
-                elif len(t) > 1 and not re.fullmatch(r"[\d\s]+", t):
-                    if nick is None:
-                        nick = t
-            if nick and score is not None and score > 0:
-                rows.append((nick, score))
-
-    # 2) div/list с ником и очками рядом
-    if not rows:
-        for el in soup.select("a, span, div, li"):
-            txt = _clean(el.get_text(" ", strip=True))
-            m = re.search(r"^(.{2,40}?)\s+(\d[\d\s]{0,12})$", txt)
-            if m:
-                nick, sc = m.group(1).strip(), int(re.sub(r"\D", "", m.group(2)) or "0")
-                if sc > 0 and nick.lower() not in ("ник", "очки", "место", "rank"):
-                    rows.append((nick, sc))
-
-    # уникальные, топ-30
-    seen = set()
     out = []
-    for nick, sc in rows:
-        key = nick.lower()
-        if key in seen:
+
+    rows = soup.select("table tbody tr, .club-boosters-list tr, .boosters-table tr")
+    if not rows:
+        rows = soup.select(".flex.items-center.justify-between, [class*='booster-row']")
+
+    for el in rows:
+        user_link = el.select_one("a[href*='/users/']")
+        if not user_link:
             continue
-        seen.add(key)
-        out.append((nick, sc))
-        if len(out) >= 30:
-            break
+
+        name = user_link.get_text(strip=True)
+        full_text = " ".join(el.get_text(" ", strip=True).split())
+        score_match = re.search(r"(\d+)[\s]*$", full_text)
+
+        if score_match and name:
+            score = score_match.group(1)
+            if name.lower() in ["главная", "каталог", "рейтинг", "подборки", "колоды"]:
+                continue
+            out.append((name, score))
+            if len(out) >= 15:
+                break
+
     return out
 
 
 def parse_history(html: str) -> list:
-    """
-    Последние внесения: [(nick, card_or_action, time), ...]
-    """
     soup = BeautifulSoup(html, "lxml")
-    items = []
-
-    # строки таблицы / list-item
-    candidates = soup.select("tr, .history-item, .list-item, li, .card, .item")
-    if not candidates:
-        candidates = soup.find_all(["div", "li", "tr"])
-
-    for el in candidates:
-        txt = _clean(el.get_text(" ", strip=True))
-        if len(txt) < 5 or len(txt) > 200:
-            continue
-        # пропуск мусора
-        low = txt.lower()
-        if any(x in low for x in ("правил", "замен", "cookie", "ddos", "cloudflare", "войти")):
-            continue
-
-        # ник — первая «словная» часть
-        nick = None
-        a = el.find("a")
-        if a and a.get_text(strip=True):
-            nick = _clean(a.get_text(strip=True))
-        if not nick:
-            parts = txt.split()
-            if parts:
-                nick = parts[0]
-
-        if not nick or len(nick) < 2:
-            continue
-
-        items.append((nick, txt[:80], ""))
-        if len(items) >= 25:
-            break
-
-    # уникальные ники, последние 10
-    seen = set()
     out = []
-    for nick, action, t in items:
-        k = nick.lower()
-        if k in seen:
+
+    items = soup.select(".club-history-list li, .history-table tr, .club-log-item")
+    if not items:
+        items = soup.select("table tbody tr")
+
+    for el in items:
+        if el.select_one("a[href='/club']") or el.select_one("a[href='/clubs']"):
             continue
-        seen.add(k)
-        out.append((nick, action, t))
+
+        t = " ".join(el.get_text(" ", strip=True).split())
+        if not t or len(t) < 10 or len(t) > 150:
+            continue
+        if "главная" in t.lower() or "каталог" in t.lower():
+            continue
+
+        out.append(t)
         if len(out) >= 10:
             break
+
     return out
-
-
-# ---------- format ----------
-MEDALS = ["🥇", "🥈", "🥉"] + [f"{i}." for i in range(4, 31)]
 
 
 def format_top(title: str, rows: list) -> str:
@@ -353,7 +264,7 @@ def format_top(title: str, rows: list) -> str:
         return f"<b>{escape(title)}</b>\nпусто 🤷‍♂️"
     lines = [f"<b>{escape(title)}</b>", f"<i>клуб:</i> {escape(CLUB_SLUG)}", ""]
     for i, (nick, score) in enumerate(rows[:20]):
-        medal = MEDALS[i] if i < len(MEDALS) else f"{i+1}."
+        medal = ["🥇", "🥈", "🥉"][i] if i < 3 else f"{i+1}."
         lines.append(f"{medal} <b>{escape(nick)}</b> — <code>{score}</code>")
     lines.append("")
     lines.append(f"<a href=\"{BOOST_URL}\">открыть boost</a>")
@@ -362,67 +273,61 @@ def format_top(title: str, rows: list) -> str:
 
 def format_history(rows: list) -> str:
     if not rows:
-        return "<b>Последние 10 внесений</b>\nпусто 🤷‍♂️"
+        return "<b>Последние 10 кто внёс</b>\nпусто 🤷‍♂️"
     lines = ["<b>Последние 10 кто внёс</b>", f"<i>клуб:</i> {escape(CLUB_SLUG)}", ""]
-    for i, (nick, action, _) in enumerate(rows[:10], 1):
-        short = escape(action) if action and action != nick else ""
-        if short and short.lower().startswith(nick.lower()):
-            short = short[len(nick) :].strip(" —:-")
-        lines.append(f"{i}. <b>{escape(nick)}</b>" + (f" — {short[:60]}" if short else ""))
+    for i, t in enumerate(rows[:10], 1):
+        lines.append(f"{i}. {escape(t)}")
     lines.append("")
     lines.append(f"<a href=\"{HISTORY_URL}\">история</a>")
     return "\n".join(lines)
 
 
-# ---------- main API for app.py ----------
+# ---------- main ----------
 def run(mode: str = None) -> str:
-    """
-    mode: all | now | week | recent
-    Вызывается из app.py /run?mode=...
-    """
-    mode = (mode or MODE_DEFAULT or "all").strip().lower()
-    print(f"=== RUN mode={mode} club={CLUB_SLUG} cookie_len={len(FULL_COOKIE)} ===")
+    mode = (mode or MODE_DEFAULT or "all").lower()
+    print(f"=== RUN mode={mode} club={CLUB_SLUG} ===")
 
-    if not BOT_TOKEN:
-        die("config", "BOT_TOKEN пустой")
-    if not CHAT_ID:
-        die("config", "CHAT_ID пустой")
-    if not FULL_COOKIE:
-        die("config", "FULL_COOKIE пустой — обнови cookie с mangabuff.ru")
-
-    messages = []
+    if not BOT_TOKEN or not CHAT_ID:
+        die("config", "Нет BOT_TOKEN или CHAT_ID")
+    if not FULL_COOKIE or len(FULL_COOKIE) < 40:
+        die("config", "FULL_COOKIE пустой")
 
     try:
-        if mode in ("all", "now", "day", "daily", "week", "weekly"):
-            html_boost = fetch(BOOST_URL)
-            top = parse_boost(html_boost)
-            if mode in ("week", "weekly"):
-                messages.append(format_top("🏆 Топ за неделю (boost)", top))
-            elif mode in ("now", "day", "daily"):
-                messages.append(format_top("📅 Топ за день / сейчас (boost)", top))
-            else:
-                messages.append(format_top("📅 Топ (boost) — день/общий", top))
-                # второй блок как «неделя» тем же списком, если отдельной вкладки нет
-                messages.append(format_top("🏆 Топ (boost) — неделя (тот же список, сайт может не делить)", top[:15]))
+        period_map = {
+            "all": "?period=all",
+            "day": "?period=day",
+            "today": "?period=day",
+            "week": "?period=week",
+            "weekly": "?period=week",
+            "month": "?period=month",
+            "past_month": "?period=month",
+        }
 
-        if mode in ("all", "recent", "history", "now"):
-            html_hist = fetch(HISTORY_URL)
-            hist = parse_history(html_hist)
-            messages.append(format_history(hist))
+        param = period_map.get(mode, "?period=all")
+        target_url = BOOST_URL + param
 
-        if not messages:
-            die("run", f"неизвестный mode={mode}")
+        html = fetch(target_url)
+        rows = parse_boost(html)
 
-        for m in messages:
-            tg_send(m)
+        titles = {
+            "all": "📊 Топ (все время)",
+            "day": "📅 Топ сегодня",
+            "today": "📅 Топ сегодня",
+            "week": "🏆 Топ неделя",
+            "weekly": "🏆 Топ неделя",
+            "month": "📆 Топ месяц",
+            "past_month": "📆 Топ прошлый месяц"
+        }
 
-        print("OK sent", len(messages), "messages")
-        return "ok"
+        title = titles.get(mode, titles["all"])
+        tg_send(format_top(title, rows))
 
+        return 0
     except SystemExit:
         raise
     except Exception as e:
-        die("run", f"{type(e).__name__}: {e}\n{traceback.format_exc()[-800:]}")
+        die("краш", f"{type(e).__name__}: {e}\n{traceback.format_exc()[-1200:]}")
+        return 1
 
 
 # local test
