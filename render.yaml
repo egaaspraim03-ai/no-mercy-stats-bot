@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: mangabuff-bot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: CHAT_ID
+        sync: false
+      - key: FULL_COOKIE
+        sync: false
+      - key: CLUB_SLUG
+        value: utinoe-bratstvo
+      - key: MODE
+        value: all
+      - key: RUN_KEY
+        generateValue: true
+      - key: PROXY
+        sync: false
+      - key: CLUB_NAME
+        value: Утиное Братство
