@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MangaBuff Telegram Bot (полностью интерактивный)
+MangaBuff Telegram Bot (интерактивный)
 Команды: /all, /today, /week, /month, /recent
-Кнопки в сообщении + постобработка
+Кнопки + постобработка
 """
 
 import os
@@ -32,7 +32,7 @@ except Exception:
 
 # ---------- ENV ----------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-CHAT_ID = os.environ.get("CHAT_ID", "").strip()          # только для теста
+CHAT_ID = os.environ.get("CHAT_ID", "").strip()
 FULL_COOKIE = os.environ.get("FULL_COOKIE", "").strip()
 CLUB_SLUG = os.environ.get("CLUB_SLUG", "utinoe-bratstvo").strip()
 PROXY = os.environ.get("PROXY", "").strip()
@@ -45,8 +45,7 @@ HISTORY_URL = f"{BASE}/clubs/{CLUB_SLUG}/history"
 # ---------- helpers ----------
 def tg_send(text: str, chat_id: str = None) -> None:
     chat = chat_id or CHAT_ID
-    if not chat:
-        return
+    if not chat: return
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, json={
         "chat_id": chat,
@@ -65,12 +64,11 @@ def die(where: str, detail: str = "") -> None:
 def headers() -> dict:
     h = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
          "Referer": f"{BASE}/clubs/{CLUB_SLUG}"}
-    if FULL_COOKIE:
-        h["Cookie"] = FULL_COOKIE
+    if FULL_COOKIE: h["Cookie"] = FULL_COOKIE
     return h
 
 
-# ---------- proxies + fetch ----------
+# ---------- proxies ----------
 def proxies():
     if PROXY:
         p = PROXY.replace("http://", "").replace("https://", "").replace("socks5://", "")
@@ -78,7 +76,6 @@ def proxies():
     sources = [
         {"url": "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000", "proto": "http"},
         {"url": "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000", "proto": "socks5"},
-        {"url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt", "proto": "http"},
     ]
     lines = []
     for src in sources:
@@ -90,31 +87,23 @@ def proxies():
                     if p and not p.startswith("#") and ":" in p:
                         p = p.split()[0] if " " in p else p
                         lines.append({"ip": p, "proto": src["proto"]})
-        except Exception:
-            continue
-    if lines:
-        random.shuffle(lines)
-        return lines
+        except Exception: continue
+    if lines: random.shuffle(lines); return lines
     return None
 
 
 def fetch(url: str) -> str:
     h = headers()
-    plist = (proxies() or [])[:8]   # 8 попыток — быстрее
-    user_agents = ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-                   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36"]
+    plist = (proxies() or [])[:8]
+    user_agents = ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"]
 
-    # 1. Direct
-    h["User-Agent"] = random.choice(user_agents)
     if HAS_CFFI:
         try:
             r = cffi_requests.get(url, headers=h, proxies=None, timeout=20, impersonate="chrome131")
             if r.status_code == 200 and "ddos" not in r.text.lower() and len(r.text) > 1500:
                 return r.text
-        except Exception:
-            pass
+        except Exception: pass
 
-    # 2. Proxies
     for pdata in plist:
         px = {"http": f"http://{pdata['ip']}", "https": f"http://{pdata['ip']}"}
         h["User-Agent"] = random.choice(user_agents)
@@ -125,8 +114,7 @@ def fetch(url: str) -> str:
                 r = requests.get(url, headers=h, proxies=px, timeout=12)
             if r.status_code == 200 and "ddos" not in r.text.lower() and len(r.text) > 1500:
                 return r.text
-        except Exception:
-            continue
+        except Exception: continue
 
     die("fetch", "не удалось скачать страницу")
     return ""
@@ -185,12 +173,10 @@ def format_history(rows: list) -> str:
     return "\n".join(lines)
 
 
-# ---------- интерактивный run ----------
+# ---------- run ----------
 def run(mode: str = None, chat_id: str = None) -> None:
     mode = (mode or "all").lower()
-    if not chat_id:
-        die("config", "chat_id не передан")
-
+    if not chat_id: die("config", "chat_id не передан")
     tg_send(f"⏳ Запуск <b>{escape(mode)}</b>… клуб <code>{escape(CLUB_SLUG)}</code>", chat_id)
 
     try:
@@ -217,14 +203,12 @@ def run(mode: str = None, chat_id: str = None) -> None:
 
 
 # ---------- webhook ----------
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    data = request.json
+def webhook(data):
     message = data.get("message", {})
     chat_id = message.get("chat", {}).get("id")
     text = message.get("text", "").lower()
 
-    if not chat_id: return "", 200
+    if not chat_id: return
 
     if text in ("/start", "/all"):
         run("all", chat_id)
@@ -237,9 +221,22 @@ def webhook():
     elif text in ("/recent", "/history"):
         run("recent", chat_id)
 
+
+# ---------- Flask app ----------
+from flask import Flask, request
+app = Flask(__name__)
+
+
+@app.route("/webhook", methods=["POST"])
+def telegram_webhook():
+    webhook(request.json)
     return "", 200
 
 
+@app.route("/health")
+def health():
+    return jsonify({"ok": True, "bot_loaded": True, "service": "no-mercy-stats-bot"})
+
+
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        run(sys.argv[1])
+    app.run(host="0.0.0.0", port=5000, debug=False)
