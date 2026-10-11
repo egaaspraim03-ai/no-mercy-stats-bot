@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Flask entrypoint for Render.
-Start command:
+Flask entrypoint for Render (no-mercy-stats-bot)
+Start Command:
   gunicorn app:app --bind 0.0.0.0:$PORT --timeout 300 --workers 1
 """
 
@@ -12,7 +12,7 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# ---- safe import bot.py ----
+# ---- безопасный импорт bot.py ----
 BOT = None
 BOT_ERROR = None
 
@@ -25,7 +25,7 @@ except Exception as e:
 
 @app.route("/")
 def health():
-    """Проверка живости сервиса + загружен ли bot.py"""
+    """Проверка: жив ли сервис и загружен ли bot.py"""
     return jsonify({
         "ok": BOT is not None,
         "bot_loaded": BOT is not None,
@@ -45,7 +45,7 @@ def run_job():
     """
     Триггер:
       /run?key=ТВОЙ_RUN_KEY&mode=all
-      mode: all | now | week | recent
+      mode: all | day | week | month | past_month | today | recent | history
     """
     key = (request.args.get("key") or "").strip()
     mode = (request.args.get("mode") or os.environ.get("MODE") or "all").strip().lower()
