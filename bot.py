@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MangaBuff Telegram Bot (интерактивный)
+MangaBuff Telegram Bot (полностью интерактивный)
 Команды: /all, /today, /week, /month, /recent
-Кнопки + постобработка + проверки
+Кнопки в сообщении + постобработка
 """
 
 import os
@@ -32,11 +32,10 @@ except Exception:
 
 # ---------- ENV ----------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
-CHAT_ID = os.environ.get("CHAT_ID", "").strip()  # только для теста, для реального — chat_id из сообщения
+CHAT_ID = os.environ.get("CHAT_ID", "").strip()          # только для теста
 FULL_COOKIE = os.environ.get("FULL_COOKIE", "").strip()
 CLUB_SLUG = os.environ.get("CLUB_SLUG", "utinoe-bratstvo").strip()
 PROXY = os.environ.get("PROXY", "").strip()
-MODE_DEFAULT = os.environ.get("MODE", "all").strip().lower()
 
 BASE = "https://mangabuff.ru"
 BOOST_URL = f"{BASE}/clubs/{CLUB_SLUG}/boost"
@@ -49,51 +48,50 @@ def tg_send(text: str, chat_id: str = None) -> None:
     if not chat:
         return
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    r = requests.post(
-        url,
-        json={
-            "chat_id": chat,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        },
-        timeout=40,
-    )
-    if r.status_code != 200:
-        print("TG error:", r.status_code, r.text[:300])
+    requests.post(url, json={
+        "chat_id": chat,
+        "text": text,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }, timeout=40)
 
 
 def die(where: str, detail: str = "") -> None:
-    msg = (
-        "Извините пожалуйста, но я <b>обосрался</b> 💩\n"
-        f"<b>Где:</b> {escape(str(where))}\n"
-        f"<b>Detail:</b> <code>{escape(str(detail)[:1500])}</code>\n"
-        "я головой бился об крышу унитаза вместо того чтобы работать как надо"
-    )
+    msg = f"Извините пожалуйста, но я <b>обосрался</b> 💩\n<b>Где:</b> {escape(str(where))}\n<b>Detail:</b> <code>{escape(str(detail)[:1500])}</code>"
     tg_send(msg, CHAT_ID)
     raise SystemExit(f"{where}: {detail}")
 
 
 def headers() -> dict:
-    h = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Referer": f"{BASE}/clubs/{CLUB_SLUG}",
-    }
+    h = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+         "Referer": f"{BASE}/clubs/{CLUB_SLUG}"}
     if FULL_COOKIE:
         h["Cookie"] = FULL_COOKIE
     return h
 
 
-# ---------- free proxies + ускорение ----------
+# ---------- proxies + fetch ----------
 def proxies():
     if PROXY:
         p = PROXY.replace("http://", "").replace("https://", "").replace("socks5://", "")
         return [{"ip": p, "proto": "http"}]
-    # ... (твой старый список источников) ...
-    sources = [ ... ]  # оставь как было
-    # (я оставил твой старый код, чтобы не дублировать)
+    sources = [
+        {"url": "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=http&timeout=10000", "proto": "http"},
+        {"url": "https://api.proxyscrape.com/v2/?request=displayproxies&protocol=socks5&timeout=10000", "proto": "socks5"},
+        {"url": "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt", "proto": "http"},
+    ]
     lines = []
-    # ... логика ...
+    for src in sources:
+        try:
+            r = requests.get(src["url"], timeout=12)
+            if r.status_code == 200:
+                for line in r.text.splitlines():
+                    p = line.strip()
+                    if p and not p.startswith("#") and ":" in p:
+                        p = p.split()[0] if " " in p else p
+                        lines.append({"ip": p, "proto": src["proto"]})
+        except Exception:
+            continue
     if lines:
         random.shuffle(lines)
         return lines
@@ -102,24 +100,21 @@ def proxies():
 
 def fetch(url: str) -> str:
     h = headers()
-    plist = (proxies() or [])[:8]  # уменьшил до 8 — быстрее
+    plist = (proxies() or [])[:8]   # 8 попыток — быстрее
+    user_agents = ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+                   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36"]
 
-    user_agents = [ ... ]  # твой список
-    impersonates = ["chrome131", "chrome124"]
-
-    last_err = ""
-
-    # 1. Прямой запрос первым делом
+    # 1. Direct
     h["User-Agent"] = random.choice(user_agents)
     if HAS_CFFI:
         try:
             r = cffi_requests.get(url, headers=h, proxies=None, timeout=20, impersonate="chrome131")
             if r.status_code == 200 and "ddos" not in r.text.lower() and len(r.text) > 1500:
                 return r.text
-        except Exception as e:
-            last_err = str(e)
+        except Exception:
+            pass
 
-    # 2. Прокси
+    # 2. Proxies
     for pdata in plist:
         px = {"http": f"http://{pdata['ip']}", "https": f"http://{pdata['ip']}"}
         h["User-Agent"] = random.choice(user_agents)
@@ -133,55 +128,87 @@ def fetch(url: str) -> str:
         except Exception:
             continue
 
-    die("fetch", last_err or "не удалось скачать страницу")
+    die("fetch", "не удалось скачать страницу")
     return ""
 
 
-# ---------- парсеры (как раньше) ----------
+# ---------- parsers ----------
 def parse_boost(html: str) -> list:
     soup = BeautifulSoup(html, "lxml")
     out = []
-    # ... (твой старый parse_boost) ...
+    rows = soup.select("table tbody tr, .club-boosters-list tr, .boosters-table tr, [class*='booster'] tr")
+    for el in rows:
+        user_link = el.select_one("a[href*='/users/']")
+        if not user_link: continue
+        name = user_link.get_text(strip=True)
+        if not name: continue
+        full_text = " ".join(el.get_text(" ", strip=True).split())
+        score_match = re.search(r"(\d+)[\s]*$", full_text)
+        if score_match:
+            score = score_match.group(1)
+            if name.lower() not in ["главная", "каталог", "рейтинг", "подборки", "колоды"]:
+                out.append((name, score))
+                if len(out) >= 20: break
     return out
 
 
 def parse_history(html: str) -> list:
     soup = BeautifulSoup(html, "lxml")
     out = []
-    # ... (твой старый parse_history) ...
+    items = soup.select(".club-history-list li, .history-table tr, [class*='history'] li")
+    for el in items:
+        if el.select_one("a[href='/club']"): continue
+        t = " ".join(el.get_text(" ", strip=True).split())
+        if len(t) > 5 and len(t) < 180:
+            out.append(t)
+            if len(out) >= 10: break
     return out
 
 
 def format_top(title: str, rows: list) -> str:
-    # твой формат
-    return "..."
+    if not rows:
+        return f"<b>{escape(title)}</b>\nпусто 🤷‍♂️\n\n<a href=\"{BOOST_URL}\">открыть boost</a>"
+    lines = [f"<b>{escape(title)}</b>", f"<i>клуб: {escape(CLUB_SLUG)}</i>", ""]
+    for i, (nick, score) in enumerate(rows[:20]):
+        lines.append(f"{i+1}. <b>{escape(nick)}</b> — <code>{score}</code>")
+    lines.append(f"\n<a href=\"{BOOST_URL}\">открыть boost</a>")
+    return "\n".join(lines)
+
 
 def format_history(rows: list) -> str:
-    # твой формат
-    return "..."
+    if not rows:
+        return f"<b>Последние 10 кто внёс</b>\nпусто 🤷‍♂️\n\n<a href=\"{HISTORY_URL}\">история</a>"
+    lines = ["<b>Последние 10 кто внёс</b>", f"<i>клуб: {escape(CLUB_SLUG)}</i>", ""]
+    for i, t in enumerate(rows[:10], 1):
+        lines.append(f"{i}. {escape(t)}")
+    lines.append(f"\n<a href=\"{HISTORY_URL}\">история</a>")
+    return "\n".join(lines)
 
 
-# ---------- интерактивная логика ----------
+# ---------- интерактивный run ----------
 def run(mode: str = None, chat_id: str = None) -> None:
-    mode = (mode or MODE_DEFAULT or "all").lower()
-    print(f"Запуск режима: {mode} (chat_id={chat_id})")
-
+    mode = (mode or "all").lower()
     if not chat_id:
         die("config", "chat_id не передан")
 
-    tg_send(f"⏳ Запуск <b>{escape(mode)}</b>… клуб <code>{escape(CLUB_SLUG)}</code>\ncookie={len(FULL_COOKIE)}", chat_id)
+    tg_send(f"⏳ Запуск <b>{escape(mode)}</b>… клуб <code>{escape(CLUB_SLUG)}</code>", chat_id)
 
     try:
-        # ... весь твой старый код с period_map и fetch ...
-        # (скопируй из предыдущей версии bot.py)
+        period_map = {"all": "?period=all", "day": "?period=day", "week": "?period=week", "month": "?period=month"}
+        titles = {"all": "📊 Топ (все время)", "day": "📅 Топ сегодня", "week": "🏆 Топ неделя", "month": "📆 Топ месяц"}
 
-        if mode in ("all", "day", "week", "month", "past_month", "today", "now", "daily", "weekly"):
-            # ... fetch boost, parse, tg_send ...
+        if mode in period_map:
+            target_url = BOOST_URL + period_map[mode]
+            html = fetch(target_url)
+            rows = parse_boost(html)
+            tg_send(format_top(titles[mode], rows), chat_id)
 
         if mode in ("recent", "history"):
-            # ... history ...
+            html = fetch(HISTORY_URL)
+            items = parse_history(html)
+            tg_send(format_history(items), chat_id)
 
-        tg_send("✅ Готово!", chat_id)
+        tg_send("✅ Готово! Результаты в этом же чате.", chat_id)
 
     except SystemExit:
         raise
@@ -189,19 +216,16 @@ def run(mode: str = None, chat_id: str = None) -> None:
         die("краш", f"{type(e).__name__}: {e}")
 
 
-# ---------- WEBHOOK (Telegram) ----------
+# ---------- webhook ----------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
     message = data.get("message", {})
-
     chat_id = message.get("chat", {}).get("id")
     text = message.get("text", "").lower()
 
-    if not chat_id:
-        return "", 200
+    if not chat_id: return "", 200
 
-    # Команды
     if text in ("/start", "/all"):
         run("all", chat_id)
     elif text in ("/today", "/day"):
@@ -217,8 +241,5 @@ def webhook():
 
 
 if __name__ == "__main__":
-    # Если запускаешь локально
     if len(sys.argv) > 1:
-        run(sys.argv[1] if len(sys.argv) > 1 else "all")
-    else:
-        print("Бот запущен в режиме Telegram Webhook")
+        run(sys.argv[1])
