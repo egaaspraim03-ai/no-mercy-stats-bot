@@ -1,3 +1,7 @@
-requests
-beautifulsoup4
-lxml
+flask==3.0.3
+gunicorn==22.0.0
+requests==2.32.3
+beautifulsoup4==4.12.3
+lxml==5.3.0
+curl_cffi==0.7.4
+cloudscraper==1.2.71
