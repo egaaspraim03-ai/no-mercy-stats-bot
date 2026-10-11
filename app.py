@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-# app.py — новый чистый для Render (без ошибок)
+# app.py — чистый для Render (Flask + Gunicorn + Telegram bot)
 
+import os
 from flask import Flask, request, jsonify
-import sys
-import traceback
 
+# Импорт бота (из bot.py)
 try:
-    from bot import run, now_msk, die, send_telegram, headers, proxies
+    from bot import run
     HAS_BOT = True
 except ImportError:
     HAS_BOT = False
-    print("ERROR: No bot.py or import failed", file=sys.stderr)
+    print("ERROR: bot.py not found", file=open("/dev/null", "a"))
 
 app = Flask(__name__)
 
@@ -32,17 +32,14 @@ def run_job():
 
     mode = request.args.get("mode", os.environ.get("MODE", "all")).strip().lower()
     try:
-        if HAS_BOT and "bot" in globals():
+        if HAS_BOT:
             code = run(mode)
             return jsonify({"ok": code == 0, "mode": mode, "code": code})
-        else:
-            return jsonify({"ok": False, "error": "bot.py not loaded"}), 500
-    except SystemExit as e:
-        code = int(getattr(e, 'code', 1))
-        return jsonify({"ok": False, "mode": mode, "code": code}), 500
+        return jsonify({"ok": False, "error": "bot.py not loaded"}), 500
     except Exception as e:
-        print(f"UNHANDLED: {type(e).__name__}: {e}", file=sys.stderr)
+        print(f"run error: {e}", file=sys.stderr)
         return jsonify({"ok": False, "error": str(e)}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
