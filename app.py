@@ -3,7 +3,7 @@
 import os
 import traceback
 import threading
-from flask import Flask, request, jsonify
+from bot import app
 
 app = Flask(__name__)
 
