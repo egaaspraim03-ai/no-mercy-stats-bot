@@ -3,7 +3,6 @@
 """
 MangaBuff Telegram Bot (интерактивный)
 Команды: /all, /today, /week, /month, /recent
-Кнопки + постобработка
 """
 
 import os
@@ -16,19 +15,7 @@ from urllib.parse import unquote
 
 import requests
 from bs4 import BeautifulSoup
-
-try:
-    from curl_cffi import requests as cffi_requests
-    HAS_CFFI = True
-except Exception:
-    HAS_CFFI = False
-    cffi_requests = None
-
-try:
-    import cloudscraper
-    HAS_CS = True
-except Exception:
-    HAS_CS = False
+from flask import Flask, request
 
 # ---------- ENV ----------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
@@ -97,7 +84,7 @@ def fetch(url: str) -> str:
     plist = (proxies() or [])[:8]
     user_agents = ["Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"]
 
-    if HAS_CFFI:
+    if HAS_CFFI:  # оставил для совместимости
         try:
             r = cffi_requests.get(url, headers=h, proxies=None, timeout=20, impersonate="chrome131")
             if r.status_code == 200 and "ddos" not in r.text.lower() and len(r.text) > 1500:
@@ -202,7 +189,22 @@ def run(mode: str = None, chat_id: str = None) -> None:
         die("краш", f"{type(e).__name__}: {e}")
 
 
-# ---------- webhook ----------
+# ---------- Flask app ----------
+app = Flask(__name__)
+
+@app.route("/webhook", methods=["POST"])
+def telegram_webhook():
+    data = request.json
+    webhook(data)  # вызов функции
+    return "", 200
+
+
+@app.route("/health")
+def health():
+    return jsonify({"ok": True, "bot_loaded": True, "service": "no-mercy-stats-bot"})
+
+
+# ---------- webhook функция ----------
 def webhook(data):
     message = data.get("message", {})
     chat_id = message.get("chat", {}).get("id")
@@ -222,21 +224,6 @@ def webhook(data):
         run("recent", chat_id)
 
 
-# ---------- Flask app ----------
-from flask import Flask, request
-app = Flask(__name__)
-
-
-@app.route("/webhook", methods=["POST"])
-def telegram_webhook():
-    webhook(request.json)
-    return "", 200
-
-
-@app.route("/health")
-def health():
-    return jsonify({"ok": True, "bot_loaded": True, "service": "no-mercy-stats-bot"})
-
-
+# ---------- main ----------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
