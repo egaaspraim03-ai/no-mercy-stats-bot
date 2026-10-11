@@ -26,7 +26,7 @@ def _bg(mode: str):
             if BOT and hasattr(BOT, "tg_send"):
                 BOT.tg_send(
                     f"Извините, обосрался 💩\nbackground\n<code>{type(e).__name__}: {e}</code>"
-                )
+                )мы
         except Exception:
             pass
 
