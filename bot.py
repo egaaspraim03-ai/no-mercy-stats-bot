@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-MangaBuff club stats → Telegram
-Render free, phone-friendly, без curl_cffi и без мёртвых free-прокси
+MangaBuff club stats → Telegram (Render)
+curl_cffi + cloudscraper + cookie + optional PROXY
 """
 
 import os
@@ -15,13 +15,27 @@ from zoneinfo import ZoneInfo
 import requests
 from bs4 import BeautifulSoup
 
+try:
+    from curl_cffi import requests as cffi_requests
+    HAS_CFFI = True
+except Exception:
+    HAS_CFFI = False
+    cffi_requests = None
+
+try:
+    import cloudscraper
+    HAS_CS = True
+except Exception:
+    HAS_CS = False
+    cloudscraper = None
+
 # ---------- ENV ----------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
 CHAT_ID = os.environ.get("CHAT_ID", "").strip()
 FULL_COOKIE = os.environ.get("FULL_COOKIE", "").strip()
 CLUB_SLUG = os.environ.get("CLUB_SLUG", "utinoe-bratstvo").strip()
 RUN_KEY = os.environ.get("RUN_KEY", "duck2026").strip()
-PROXY = os.environ.get("PROXY", "").strip()  # опционально: http://ip:port
+PROXY = os.environ.get("PROXY", "").strip()  # http://user:pass@ip:port или http://ip:port
 
 BASE = "https://mangabuff.ru"
 BOOST_URL = f"{BASE}/clubs/{CLUB_SLUG}/boost"
@@ -33,7 +47,7 @@ def now_msk() -> str:
     return datetime.now(MSK).strftime("%d.%m.%Y %H:%M МСК")
 
 
-def tg_send(text: str, chat_id: str | None = None) -> None:
+def tg_send(text: str, chat_id: str = None) -> None:
     chat = str(chat_id or CHAT_ID).strip()
     if not BOT_TOKEN or not chat:
         print("WARN: no BOT_TOKEN/CHAT_ID", flush=True)
@@ -50,7 +64,7 @@ def tg_send(text: str, chat_id: str | None = None) -> None:
             timeout=40,
         )
         if r.status_code != 200:
-            print("TG fail:", r.status_code, r.text[:300], flush=True)
+            print("TG fail:", r.status_code, r.text[:400], flush=True)
     except Exception as e:
         print("TG exception:", e, flush=True)
 
@@ -94,43 +108,81 @@ def browser_headers() -> dict:
     return h
 
 
+def _proxy_dict():
+    if not PROXY:
+        return None
+    p = PROXY if "://" in PROXY else f"http://{PROXY}"
+    return {"http": p, "https": p}
+
+
+def _ok(text: str, status: int) -> bool:
+    if status != 200 or not text:
+        return False
+    low = text.lower()
+    if "ddos" in low or "ddos-guard" in low or "checking your browser" in low:
+        return False
+    return len(text) > 1500
+
+
 def fetch(url: str) -> str:
-    """Прямой запрос + Session + cookie. PROXY только если ты сам задал в env."""
-    session = requests.Session()
     h = browser_headers()
-    proxies = None
-    if PROXY:
-        p = PROXY if "://" in PROXY else f"http://{PROXY}"
-        proxies = {"http": p, "https": p}
+    px = _proxy_dict()
+    errors = []
 
-    last = ""
-    for attempt in range(2):
+    # 1) curl_cffi — лучший шанс
+    if HAS_CFFI:
+        for imp in ("chrome131", "chrome124", "chrome120"):
+            try:
+                r = cffi_requests.get(
+                    url,
+                    headers=h,
+                    proxies=px,
+                    timeout=25,
+                    impersonate=imp,
+                    allow_redirects=True,
+                )
+                if _ok(r.text, r.status_code):
+                    print(f"fetch OK curl_cffi {imp}", flush=True)
+                    return r.text
+                errors.append(f"cffi/{imp}: status={r.status_code} len={len(r.text or '')}")
+            except Exception as e:
+                errors.append(f"cffi/{imp}: {type(e).__name__}: {e}")
+
+    # 2) cloudscraper
+    if HAS_CS:
         try:
-            r = session.get(
-                url,
-                headers=h,
-                proxies=proxies,
-                timeout=30,
-                allow_redirects=True,
+            sc = cloudscraper.create_scraper(
+                browser={"browser": "chrome", "platform": "windows", "mobile": False}
             )
-            text = r.text or ""
-            low = text.lower()
-            if r.status_code == 200 and "ddos" not in low and len(text) > 1500:
-                print(f"fetch OK attempt={attempt} len={len(text)}", flush=True)
-                return text
-            last = f"status={r.status_code} len={len(text)} ddos={'yes' if 'ddos' in low else 'no'}"
+            r = sc.get(url, headers=h, proxies=px, timeout=25)
+            if _ok(r.text, r.status_code):
+                print("fetch OK cloudscraper", flush=True)
+                return r.text
+            errors.append(f"cloudscraper: status={r.status_code} len={len(r.text or '')}")
         except Exception as e:
-            last = f"{type(e).__name__}: {e}"
-            print("fetch err:", last, flush=True)
+            errors.append(f"cloudscraper: {type(e).__name__}: {e}")
 
-    die(
-        "fetch",
-        f"MangaBuff не отдал страницу. {last}\n"
+    # 3) обычный requests + Session
+    try:
+        s = requests.Session()
+        r = s.get(url, headers=h, proxies=px, timeout=30, allow_redirects=True)
+        if _ok(r.text, r.status_code):
+            print("fetch OK requests", flush=True)
+            return r.text
+        errors.append(f"requests: status={r.status_code} len={len(r.text or '')} ddos={'yes' if 'ddos' in (r.text or '').lower() else 'no'}")
+    except Exception as e:
+        errors.append(f"requests: {type(e).__name__}: {e}")
+
+    detail = (
+        "MangaBuff не отдал страницу (403/ddos).\n"
         f"url={url}\n"
-        "1) Обнови FULL_COOKIE (Cookie Manager, вся строка)\n"
-        "2) Или задай PROXY=http://ip:port в Environment (живой residential)\n"
-        "3) Free-прокси с интернета почти не работают против DDoS-Guard",
+        f"cffi={HAS_CFFI} cloudscraper={HAS_CS} proxy={bool(PROXY)} cookie_len={len(FULL_COOKIE)}\n"
+        + " | ".join(errors[-6:])
+        + "\n1) Обнови FULL_COOKIE (Cookie Manager, ВСЯ строка)\n"
+        "2) PROXY=http://ip:port (residential) — free-прокси почти не работают\n"
+        "3) Или userscript на телефоне"
     )
+    die("fetch", detail)
     return ""
 
 
@@ -140,7 +192,7 @@ def parse_boost(html: str) -> list:
     seen = set()
     junk = {
         "главная", "каталог", "рейтинг", "подборки", "колоды",
-        "лента", "клубы", "профиль", "новости", "меню",
+        "лента", "клубы", "профиль", "новости",
     }
     rows = soup.select(
         "table tbody tr, table tr, "
@@ -192,7 +244,7 @@ def format_top(title: str, rows: list) -> str:
         "",
     ]
     if not rows:
-        lines.append("⚠️ Пусто (никто не вносил / cookie / селектор / защита)")
+        lines.append("⚠️ Пусто (никто не вносил / cookie / защита / селектор)")
         lines.append(f'\n<a href="{BOOST_URL}">открыть boost</a>')
         return "\n".join(lines)
     medals = ["🥇", "🥈", "🥉"]
@@ -224,14 +276,22 @@ def run(mode: str = None, chat_id: str = None) -> str:
     mode = (mode or "all").lower().strip()
     target = chat_id or CHAT_ID
 
-    print(f"=== RUN mode={mode} club={CLUB_SLUG} cookie_len={len(FULL_COOKIE)} proxy={bool(PROXY)} ===", flush=True)
+    print(
+        f"=== RUN mode={mode} club={CLUB_SLUG} "
+        f"cookie_len={len(FULL_COOKIE)} cffi={HAS_CFFI} cs={HAS_CS} proxy={bool(PROXY)} ===",
+        flush=True,
+    )
 
     if not BOT_TOKEN or not CHAT_ID:
         die("config", "Нет BOT_TOKEN или CHAT_ID")
     if not FULL_COOKIE or len(FULL_COOKIE) < 50:
-        die("config", "FULL_COOKIE пустой или слишком короткий. Обнови из Cookie Manager.")
+        die("config", "FULL_COOKIE пустой. Cookie Manager → скопируй ВСЮ строку.")
 
-    tg_send(f"⏳ Запуск <b>{escape(mode)}</b>… клуб <code>{escape(CLUB_SLUG)}</code>", target)
+    tg_send(
+        f"⏳ Запуск <b>{escape(mode)}</b>… клуб <code>{escape(CLUB_SLUG)}</code>\n"
+        f"cffi={HAS_CFFI} cloudscraper={HAS_CS}",
+        target,
+    )
 
     period_map = {
         "day": "?period=day",
